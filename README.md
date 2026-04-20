@@ -1,6 +1,99 @@
 <!-- SPDX-License-Identifier: BSD-3-Clause -->
 <!-- Copyright (c) Contributors to the OpenEXR Project -->
 
+This is a fork adding some features to the PYBIND that already exist in C++ to expose them when using the python module as a library. The changes in this fork require a few changes (maybe soon) to be compliant with the style guide defined in [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## PyOpenEXR Wrapper Changes Summary
+
+### 1. Added tile read APIs for tiled EXR files
+Two new File methods were added:
+- readTile(dx, dy, part_index=0, level_x=0, level_y=0, separate_channels=False)
+- readTiles(dx1, dx2, dy1, dy2, part_index=0, level_x=0, level_y=0, separate_channels=False)
+
+These methods let Python users read one native tile or a rectangular tile range without loading full pixel data.
+
+### 2. Added runtime validation for safe tile access
+The new tile-read path validates:
+- file is opened from a filename
+- part index is valid
+- dx1 <= dx2 and dy1 <= dy2
+- requested level exists
+- tile range is inside level bounds
+- part is a regular tiled image
+
+This gives clearer failures for invalid tile requests.
+
+### 3. Added packed and separate channel output modes
+The new APIs support:
+- packed mode (default): RGB or RGBA arrays when channels are compatible
+- separate mode: independent channel arrays when separate_channels=True
+
+This matches existing user expectations while enabling more explicit workflows.
+
+### 4. Exposed OpenEXR internal thread controls to Python
+Two module functions were added:
+- setGlobalThreadCount(count)
+- globalThreadCount()
+
+The module also initializes internal thread count to 0 at import, meaning chunk compression/decompression runs on the calling thread unless changed.
+
+### 5. Added automated unit test coverage
+A new test validates:
+- shape of single-tile output
+- shape of tile-range output
+- value correctness against full-image reads
+- separate-channel behavior for tile reads
+
+This confirms correctness of tile-region reads and channel layout behavior.
+
+## Example Code:
+```python
+import OpenEXR
+import numpy as np
+
+# 1) Read a single tile (packed RGBA by default)
+with OpenEXR.File("tiled.exr", header_only=True) as f:
+    one_tile = f.readTile(1, 1)
+    rgba_tile = one_tile["RGBA"].pixels
+    print("single tile shape:", rgba_tile.shape)
+
+# 2) Read a tile rectangle (inclusive tile coordinates)
+with OpenEXR.File("tiled.exr", header_only=True) as f:
+    tile_block = f.readTiles(0, 1, 0, 1)
+    rgba_block = tile_block["RGBA"].pixels
+    print("tile block shape:", rgba_block.shape)
+
+# 3) Read separate channels
+with OpenEXR.File("tiled.exr", header_only=True) as f:
+    separate = f.readTile(0, 0, separate_channels=True)
+    print("channels:", sorted(separate.keys()))
+    r = separate["R"].pixels
+    g = separate["G"].pixels
+    b = separate["B"].pixels
+    a = separate["A"].pixels
+    print("R shape:", r.shape)
+
+# 4) Compare a tile read with a full read slice
+with OpenEXR.File("tiled.exr") as f:
+    full = f.channels()["RGBA"].pixels
+
+with OpenEXR.File("tiled.exr", header_only=True) as f:
+    tile = f.readTile(1, 1)["RGBA"].pixels
+
+# Example comparison if tile size is 32x32 and tile index is (1,1)
+# adjust slicing based on your file tile dimensions
+print("matches expected slice:", np.array_equal(tile, full[32:64, 32:64]))
+
+# 5) Control OpenEXR internal worker threads
+print("thread count before:", OpenEXR.globalThreadCount())
+OpenEXR.setGlobalThreadCount(4)
+print("thread count after:", OpenEXR.globalThreadCount())
+```
+
+
+# OpenEXR repo README:
+___
+
 [![License](https://img.shields.io/github/license/AcademySoftwareFoundation/openexr)](LICENSE.md)
 [![CII Best Practices](https://bestpractices.coreinfrastructure.org/projects/2799/badge)](https://bestpractices.coreinfrastructure.org/projects/2799)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/AcademySoftwareFoundation/openexr/badge)](https://securityscorecards.dev/viewer/?uri=github.com/AcademySoftwareFoundation/openexr)
